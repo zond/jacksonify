@@ -434,10 +434,9 @@
         const source = audioCtx.createBufferSource();
         source.buffer = sampleBuf;
 
-        // Pitch shift via playback rate
-        if (p.pitch_shift !== 0) {
-          source.playbackRate.value = Math.pow(2, p.pitch_shift / 12);
-        }
+        // Combine pitch shift and groove-feel playback rate
+        const pitchRate = Math.pow(2, p.pitch_shift / 12);
+        source.playbackRate.value = pitchRate * (p.playback_rate || 1.0);
 
         // Gain: scale relative to song loudness + user volume
         const gainNode = audioCtx.createGain();
@@ -491,9 +490,7 @@
 
           const s = offline.createBufferSource();
           s.buffer = sampleBuf;
-          if (p.pitch_shift !== 0) {
-            s.playbackRate.value = Math.pow(2, p.pitch_shift / 12);
-          }
+          s.playbackRate.value = Math.pow(2, p.pitch_shift / 12) * (p.playback_rate || 1.0);
           const g = offline.createGain();
           g.gain.value = p.gain * levelMatch * getVolumeMultiplier();
           s.connect(g);
@@ -651,6 +648,7 @@
               time_seconds: p.time_seconds,
               sample_file: p.sample_file,
               pitch_shift: p.pitch_shift,
+              playback_rate: p.playback_rate,
               gain: p.gain,
               priority: p.priority,
             });

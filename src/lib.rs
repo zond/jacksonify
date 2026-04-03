@@ -56,6 +56,7 @@ pub struct PlacementEntry {
     time_seconds: f64,
     sample_file: String,
     pitch_shift: i8,
+    playback_rate: f32,
     gain: f32,
     priority: f32,
 }
@@ -73,6 +74,10 @@ impl PlacementEntry {
     #[wasm_bindgen(getter)]
     pub fn pitch_shift(&self) -> i8 {
         self.pitch_shift
+    }
+    #[wasm_bindgen(getter)]
+    pub fn playback_rate(&self) -> f32 {
+        self.playback_rate
     }
     #[wasm_bindgen(getter)]
     pub fn gain(&self) -> f32 {
@@ -116,6 +121,7 @@ impl JacksonifyResult {
             time_seconds: p.time_seconds,
             sample_file: p.sample_file.clone(),
             pitch_shift: p.pitch_shift,
+            playback_rate: p.playback_rate,
             gain: p.gain,
             priority: p.priority,
         })
@@ -140,6 +146,7 @@ pub fn jacksonify(samples: &[f32], sample_rate: f32) -> JacksonifyResult {
             time_seconds: p.time_seconds,
             sample_file: p.sample_file,
             pitch_shift: p.pitch_shift_semitones,
+            playback_rate: p.playback_rate,
             gain: p.gain,
             priority: p.priority,
         })
