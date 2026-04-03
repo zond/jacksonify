@@ -178,9 +178,11 @@ fn assign_and_prioritize(
 ) -> Vec<AdLibPlacement> {
     let mut placements = Vec::new();
 
-    // Track last used category to add variety
+    // Track recently used samples to add variety
     let mut last_category: Option<Category> = None;
+    let mut last_file: Option<&str> = None;
     let mut last_time = f64::NEG_INFINITY;
+    let mut pick_counter: usize = 0;
 
     for candidate in &candidates {
         // Find which section this candidate is in
@@ -230,15 +232,29 @@ fn assign_and_prioritize(
             continue;
         }
 
-        // Pick sample — prefer different category from last
-        let sample = if let Some(last_cat) = last_category {
-            available
+        // Pick sample — avoid repeating the same file, rotate through available
+        let sample = {
+            // First try: different file AND different category
+            let mut choice = available
                 .iter()
-                .find(|s| s.category != last_cat)
-                .unwrap_or(&available[0])
-        } else {
-            available[0]
+                .filter(|s| {
+                    Some(s.file) != last_file
+                        && last_category.map_or(true, |lc| s.category != lc)
+                })
+                .nth(pick_counter % available.len().max(1));
+
+            // Fallback: just different file
+            if choice.is_none() {
+                choice = available
+                    .iter()
+                    .filter(|s| Some(s.file) != last_file)
+                    .nth(pick_counter % available.len().max(1));
+            }
+
+            // Final fallback: rotate through all available
+            choice.unwrap_or(&available[pick_counter % available.len()])
         };
+        pick_counter += 1;
 
         // Compute priority (determines at what slider level this gets included)
         let priority = (density_mult * tempo_mult * candidate.beat_strength as f64)
@@ -308,6 +324,7 @@ fn assign_and_prioritize(
         });
 
         last_category = Some(sample.category);
+        last_file = Some(sample.file);
         last_time = candidate.time;
     }
 
