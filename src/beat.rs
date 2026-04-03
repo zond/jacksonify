@@ -317,36 +317,32 @@ fn estimate_tempo_autocorrelation(onset_signal: &[f32], sample_rate: f32) -> f64
         autocorr[lag] = sum / var;
     }
 
-    // Find peaks in the autocorrelation (local maxima)
-    let mut candidates: Vec<(usize, f64)> = Vec::new();
-    for lag in (min_lag + 1)..max_lag {
-        if autocorr[lag] > autocorr[lag - 1] && autocorr[lag] > autocorr[lag + 1]
-            && autocorr[lag] > 0.0
-        {
-            candidates.push((lag, autocorr[lag]));
+    // Apply perceptual tempo weighting — Gaussian centered at 120 BPM
+    // This biases toward common musical tempos and prevents spurious
+    // peaks at extreme BPM values from dominating.
+    let mut weighted = vec![0.0f64; max_lag + 1];
+    for lag in min_lag..=max_lag {
+        let bpm = 60.0 / (lag as f64 * seconds_per_frame);
+        // Gaussian weight: prefer 80-160 BPM range, centered at 120
+        let w = (-(bpm - 120.0).powi(2) / (2.0 * 40.0_f64.powi(2))).exp();
+        weighted[lag] = autocorr[lag] * w;
+    }
+
+    // Find the best weighted peak
+    for lag in min_lag..=max_lag {
+        if weighted[lag] > best_corr {
+            best_corr = weighted[lag];
+            best_lag = lag;
         }
     }
 
-    if candidates.is_empty() {
-        // Fallback: just take the global max
-        for lag in min_lag..=max_lag {
-            if autocorr[lag] > best_corr {
-                best_corr = autocorr[lag];
-                best_lag = lag;
-            }
-        }
-    } else {
-        // Prefer the first strong peak (smallest lag = fastest reasonable tempo)
-        // but weight by correlation strength
-        let max_corr = candidates.iter().map(|(_, c)| *c).fold(0.0f64, f64::max);
-        let threshold = max_corr * 0.8;
-
-        // Among candidates above 80% of the max, pick the one with smallest lag
-        // (this avoids octave errors — picking half-tempo)
-        if let Some(&(lag, _)) = candidates.iter().find(|(_, c)| *c >= threshold) {
-            best_lag = lag;
-        } else {
-            best_lag = candidates[0].0;
+    // Refine: check if there's a peak at half the lag (double tempo) that's
+    // also strong — if so, prefer the faster tempo to avoid half-tempo errors
+    let half_lag = best_lag / 2;
+    if half_lag >= min_lag {
+        let half_bpm = 60.0 / (half_lag as f64 * seconds_per_frame);
+        if half_bpm >= 60.0 && half_bpm <= 200.0 && autocorr[half_lag] > autocorr[best_lag] * 0.6 {
+            best_lag = half_lag;
         }
     }
 
