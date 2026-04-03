@@ -194,6 +194,9 @@
         <span>Maximum MJ</span>
       </div>
       <div class="placement-count" id="placementCount"></div>
+      <button class="btn download-btn" id="downloadBtn" style="margin-top: 0.75rem">
+        <span>Download mix</span>
+      </button>
     </div>
 
     <div class="results" id="results">
@@ -437,6 +440,109 @@
         scheduleAdLibs();
       }
     });
+
+    // --- Download mix ---
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    downloadBtn.addEventListener('click', async () => {
+      if (!songBuffer) return;
+      downloadBtn.disabled = true;
+      downloadBtn.querySelector('span').textContent = 'Rendering…';
+
+      try {
+        const sr = songBuffer.sampleRate;
+        const channels = songBuffer.numberOfChannels;
+        const length = songBuffer.length;
+        const offline = new OfflineAudioContext(channels, length, sr);
+
+        // Song source
+        const src = offline.createBufferSource();
+        src.buffer = songBuffer;
+        src.connect(offline.destination);
+        src.start(0);
+
+        // Ad-lib sources
+        const active = getActivePlacements();
+        const levelMatch = songRms / 0.08;
+        for (const p of active) {
+          const sampleBuf = sampleBuffers[p.sample_file];
+          if (!sampleBuf) continue;
+          if (p.time_seconds < 0 || p.time_seconds >= songDuration) continue;
+
+          const s = offline.createBufferSource();
+          s.buffer = sampleBuf;
+          if (p.pitch_shift !== 0) {
+            s.playbackRate.value = Math.pow(2, p.pitch_shift / 12);
+          }
+          const g = offline.createGain();
+          g.gain.value = p.gain * levelMatch;
+          s.connect(g);
+          g.connect(offline.destination);
+          s.start(p.time_seconds);
+        }
+
+        const rendered = await offline.startRendering();
+
+        // Encode to WAV
+        const wavBlob = encodeWav(rendered);
+        const url = URL.createObjectURL(wavBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'jacksonified.wav';
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (e) {
+        console.error('Download failed:', e);
+        statusEl.textContent = 'Download error: ' + e.message;
+      } finally {
+        downloadBtn.disabled = false;
+        downloadBtn.querySelector('span').textContent = 'Download mix';
+      }
+    });
+
+    function encodeWav(audioBuffer) {
+      const numChannels = audioBuffer.numberOfChannels;
+      const sampleRate = audioBuffer.sampleRate;
+      const length = audioBuffer.length;
+      const bytesPerSample = 2; // 16-bit
+      const dataSize = length * numChannels * bytesPerSample;
+      const buffer = new ArrayBuffer(44 + dataSize);
+      const view = new DataView(buffer);
+
+      // WAV header
+      writeString(view, 0, 'RIFF');
+      view.setUint32(4, 36 + dataSize, true);
+      writeString(view, 8, 'WAVE');
+      writeString(view, 12, 'fmt ');
+      view.setUint32(16, 16, true); // chunk size
+      view.setUint16(20, 1, true);  // PCM
+      view.setUint16(22, numChannels, true);
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * numChannels * bytesPerSample, true);
+      view.setUint16(32, numChannels * bytesPerSample, true);
+      view.setUint16(34, 16, true); // bits per sample
+      writeString(view, 36, 'data');
+      view.setUint32(40, dataSize, true);
+
+      // Interleave channels and convert to 16-bit
+      const channels = [];
+      for (let c = 0; c < numChannels; c++) channels.push(audioBuffer.getChannelData(c));
+
+      let offset = 44;
+      for (let i = 0; i < length; i++) {
+        for (let c = 0; c < numChannels; c++) {
+          const sample = Math.max(-1, Math.min(1, channels[c][i]));
+          view.setInt16(offset, sample * 0x7FFF, true);
+          offset += 2;
+        }
+      }
+
+      return new Blob([buffer], { type: 'audio/wav' });
+    }
+
+    function writeString(view, offset, str) {
+      for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    }
 
     // --- Init ---
     async function startup() {
