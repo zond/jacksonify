@@ -1,0 +1,595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jacksonify — Key &amp; Beat Detector</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0f13;
+      --surface: #1a1a24;
+      --border: #2a2a3a;
+      --text: #e4e4ef;
+      --muted: #8888a0;
+      --accent: #7c6cf0;
+      --accent-glow: #7c6cf040;
+      --danger: #f06c6c;
+      --success: #6cf09c;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem 1rem;
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      margin-bottom: 0.25rem;
+      letter-spacing: -0.02em;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 2rem;
+      font-size: 0.95rem;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 540px;
+    }
+
+    /* Drop zone */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: 12px;
+      padding: 3rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 1rem;
+    }
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+    .drop-zone p { color: var(--muted); margin-top: 0.5rem; font-size: 0.9rem; }
+    .drop-zone .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+
+    input[type="file"] { display: none; }
+
+    /* Record button */
+    .controls {
+      display: flex;
+      gap: 0.75rem;
+      margin-bottom: 1.5rem;
+    }
+    .btn {
+      flex: 1;
+      padding: 0.75rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+    }
+    .btn:hover { border-color: var(--accent); }
+    .btn.recording {
+      border-color: var(--danger);
+      background: #f06c6c18;
+      color: var(--danger);
+    }
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Status */
+    .status {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 1.5rem;
+      min-height: 1.4em;
+    }
+
+    /* Spinner */
+    .spinner {
+      display: inline-block;
+      width: 14px;
+      height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 0.4rem;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Results panel */
+    .results {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+      display: none;
+    }
+    .results.visible { display: block; }
+    .results h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-size: 0.75rem;
+    }
+
+    .result-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 0.75rem 0;
+    }
+    .result-row + .result-row { border-top: 1px solid var(--border); }
+    .result-label { color: var(--muted); font-size: 0.9rem; }
+    .result-value { font-size: 1.5rem; font-weight: 700; }
+    .result-value.key-value { color: var(--accent); }
+
+    .confidence-bar {
+      margin-top: 1rem;
+    }
+    .confidence-bar .label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.3rem;
+    }
+    .confidence-track {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .confidence-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width 0.4s ease;
+    }
+
+    /* File name display */
+    .file-name {
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+      min-height: 1.2em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Audio player */
+    .player {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.5rem;
+      display: none;
+    }
+    .player.visible { display: block; }
+
+    .player-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .play-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: border-color 0.2s, background 0.2s;
+      font-size: 0.9rem;
+      padding: 0;
+    }
+    .play-btn:hover { border-color: var(--accent); background: var(--accent-glow); }
+
+    /* Play/pause icons via CSS triangles and bars */
+    .play-icon {
+      width: 0; height: 0;
+      border-top: 6px solid transparent;
+      border-bottom: 6px solid transparent;
+      border-left: 10px solid var(--text);
+      margin-left: 2px;
+    }
+    .pause-icon {
+      display: flex; gap: 3px;
+    }
+    .pause-icon span {
+      width: 3px; height: 12px;
+      background: var(--text);
+      border-radius: 1px;
+    }
+
+    .seek-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 0.3rem;
+    }
+
+    .seek-bar {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      outline: none;
+      cursor: pointer;
+    }
+    .seek-bar::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: none;
+    }
+    .seek-bar::-moz-range-thumb {
+      width: 14px; height: 14px;
+      border-radius: 50%;
+      background: var(--accent);
+      cursor: pointer;
+      border: none;
+    }
+    .seek-bar::-webkit-slider-runnable-track {
+      height: 6px;
+      border-radius: 3px;
+    }
+    .seek-bar::-moz-range-track {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      border: none;
+    }
+
+    .time-display {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.75rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <h1>Jacksonify</h1>
+  <p class="subtitle">Detect the key and tempo of any song</p>
+
+  <div class="container">
+    <div class="drop-zone" id="dropZone">
+      <div class="icon">&#127925;</div>
+      <strong>Drop an audio file here</strong>
+      <p>or click to browse &mdash; MP3, WAV, OGG, FLAC&hellip;</p>
+    </div>
+    <input type="file" id="fileInput" accept="audio/*">
+
+    <div class="file-name" id="fileName"></div>
+
+    <div class="controls">
+      <button class="btn" id="recordBtn">
+        <span id="recordIcon">&#9679;</span>
+        <span id="recordLabel">Record from mic</span>
+      </button>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div class="player" id="player">
+      <div class="player-row">
+        <button class="play-btn" id="playBtn">
+          <div class="play-icon" id="playIcon"></div>
+        </button>
+        <div class="seek-container">
+          <input type="range" class="seek-bar" id="seekBar" min="0" max="1000" value="0">
+          <div class="time-display">
+            <span id="currentTime">0:00</span>
+            <span id="duration">0:00</span>
+          </div>
+        </div>
+      </div>
+      <audio id="audioEl"></audio>
+    </div>
+
+    <div class="results" id="results">
+      <h2>Analysis Results</h2>
+      <div class="result-row">
+        <span class="result-label">Detected Key</span>
+        <span class="result-value key-value" id="keyValue">—</span>
+      </div>
+      <div class="result-row">
+        <span class="result-label">Tempo</span>
+        <span class="result-value" id="tempoValue">—</span>
+      </div>
+      <div class="confidence-bar">
+        <div class="label">
+          <span>Key confidence</span>
+          <span id="confidencePercent">0%</span>
+        </div>
+        <div class="confidence-track">
+          <div class="confidence-fill" id="confidenceFill" style="width: 0%"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module">
+    import init, { analyze } from './pkg/jacksonify.js';
+
+    let wasmReady = false;
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    let isRecording = false;
+    let currentBlobUrl = null;
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const recordBtn = document.getElementById('recordBtn');
+    const recordIcon = document.getElementById('recordIcon');
+    const recordLabel = document.getElementById('recordLabel');
+    const statusEl = document.getElementById('status');
+    const resultsEl = document.getElementById('results');
+    const fileNameEl = document.getElementById('fileName');
+
+    // Player elements
+    const playerEl = document.getElementById('player');
+    const audioEl = document.getElementById('audioEl');
+    const playBtn = document.getElementById('playBtn');
+    const playIcon = document.getElementById('playIcon');
+    const seekBar = document.getElementById('seekBar');
+    const currentTimeEl = document.getElementById('currentTime');
+    const durationEl = document.getElementById('duration');
+
+    // Player logic
+    function loadAudioPlayer(blob) {
+      if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+      currentBlobUrl = URL.createObjectURL(blob);
+      audioEl.src = currentBlobUrl;
+      audioEl.load();
+      playerEl.classList.add('visible');
+      setPlayIcon(false);
+      seekBar.value = 0;
+      currentTimeEl.textContent = '0:00';
+      durationEl.textContent = '0:00';
+    }
+
+    function setPlayIcon(playing) {
+      if (playing) {
+        playIcon.className = 'pause-icon';
+        playIcon.innerHTML = '<span></span><span></span>';
+      } else {
+        playIcon.className = 'play-icon';
+        playIcon.innerHTML = '';
+      }
+    }
+
+    function formatTime(s) {
+      if (!isFinite(s)) return '0:00';
+      const m = Math.floor(s / 60);
+      const sec = Math.floor(s % 60);
+      return m + ':' + String(sec).padStart(2, '0');
+    }
+
+    playBtn.addEventListener('click', () => {
+      if (audioEl.paused) {
+        audioEl.play();
+      } else {
+        audioEl.pause();
+      }
+    });
+
+    audioEl.addEventListener('play', () => setPlayIcon(true));
+    audioEl.addEventListener('pause', () => setPlayIcon(false));
+    audioEl.addEventListener('ended', () => setPlayIcon(false));
+
+    audioEl.addEventListener('loadedmetadata', () => {
+      durationEl.textContent = formatTime(audioEl.duration);
+    });
+
+    audioEl.addEventListener('timeupdate', () => {
+      if (audioEl.duration) {
+        seekBar.value = (audioEl.currentTime / audioEl.duration) * 1000;
+        currentTimeEl.textContent = formatTime(audioEl.currentTime);
+      }
+    });
+
+    seekBar.addEventListener('input', () => {
+      if (audioEl.duration) {
+        audioEl.currentTime = (seekBar.value / 1000) * audioEl.duration;
+      }
+    });
+
+    // Init WASM
+    async function startup() {
+      statusEl.innerHTML = '<span class="spinner"></span> Loading analysis engine…';
+      try {
+        await init();
+        wasmReady = true;
+        statusEl.textContent = 'Ready — upload a file or record audio.';
+      } catch (e) {
+        statusEl.textContent = 'Failed to load WASM module: ' + e.message;
+        console.error(e);
+      }
+    }
+    startup();
+
+    // File drop & click
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const file = e.dataTransfer.files[0];
+      if (file) handleFile(file);
+    });
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) handleFile(fileInput.files[0]);
+    });
+
+    async function handleFile(file) {
+      if (!wasmReady) { statusEl.textContent = 'Still loading, please wait…'; return; }
+
+      fileNameEl.textContent = file.name;
+      statusEl.innerHTML = '<span class="spinner"></span> Decoding audio…';
+      recordBtn.disabled = true;
+      loadAudioPlayer(file);
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+        await analyzeBuffer(audioBuffer);
+        audioCtx.close();
+      } catch (e) {
+        statusEl.textContent = 'Error decoding file: ' + e.message;
+        console.error(e);
+      } finally {
+        recordBtn.disabled = false;
+      }
+    }
+
+    // Microphone recording
+    recordBtn.addEventListener('click', async () => {
+      if (!wasmReady) { statusEl.textContent = 'Still loading, please wait…'; return; }
+
+      if (isRecording) {
+        // Stop
+        mediaRecorder.stop();
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        recordedChunks = [];
+
+        mediaRecorder.addEventListener('dataavailable', (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        });
+
+        mediaRecorder.addEventListener('stop', async () => {
+          isRecording = false;
+          recordBtn.classList.remove('recording');
+          recordIcon.textContent = '\u25CF';
+          recordLabel.textContent = 'Record from mic';
+
+          // Stop all tracks
+          stream.getTracks().forEach(t => t.stop());
+
+          statusEl.innerHTML = '<span class="spinner"></span> Decoding recording…';
+          recordBtn.disabled = true;
+
+          try {
+            const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+            loadAudioPlayer(blob);
+            const arrayBuffer = await blob.arrayBuffer();
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+            fileNameEl.textContent = 'Microphone recording';
+            await analyzeBuffer(audioBuffer);
+            audioCtx.close();
+          } catch (e) {
+            statusEl.textContent = 'Error processing recording: ' + e.message;
+            console.error(e);
+          } finally {
+            recordBtn.disabled = false;
+          }
+        });
+
+        mediaRecorder.start();
+        isRecording = true;
+        recordBtn.classList.add('recording');
+        recordIcon.textContent = '\u25A0';
+        recordLabel.textContent = 'Stop recording';
+        statusEl.textContent = 'Recording… click Stop when done.';
+        fileNameEl.textContent = '';
+        resultsEl.classList.remove('visible');
+        playerEl.classList.remove('visible');
+        audioEl.pause();
+
+      } catch (e) {
+        statusEl.textContent = 'Microphone access denied.';
+        console.error(e);
+      }
+    });
+
+    // Core analysis
+    async function analyzeBuffer(audioBuffer) {
+      statusEl.innerHTML = '<span class="spinner"></span> Analyzing…';
+
+      // Mix down to mono
+      let samples;
+      if (audioBuffer.numberOfChannels === 1) {
+        samples = audioBuffer.getChannelData(0);
+      } else {
+        const ch0 = audioBuffer.getChannelData(0);
+        const ch1 = audioBuffer.getChannelData(1);
+        samples = new Float32Array(ch0.length);
+        for (let i = 0; i < ch0.length; i++) {
+          samples[i] = (ch0[i] + ch1[i]) / 2;
+        }
+      }
+
+      // Run analysis in a microtask to let the UI update
+      await new Promise(r => setTimeout(r, 50));
+
+      try {
+        const result = analyze(samples, audioBuffer.sampleRate);
+
+        document.getElementById('keyValue').textContent = result.key;
+        const bpm = Math.round(result.tempo);
+        document.getElementById('tempoValue').textContent = bpm > 0 ? bpm + ' BPM' : 'N/A';
+        const pct = Math.round(result.confidence * 100);
+        document.getElementById('confidencePercent').textContent = pct + '%';
+        document.getElementById('confidenceFill').style.width = pct + '%';
+
+        resultsEl.classList.add('visible');
+        statusEl.textContent = 'Analysis complete.';
+      } catch (e) {
+        statusEl.textContent = 'Analysis error: ' + e.message;
+        console.error(e);
+      }
+    }
+  </script>
+</body>
+</html>
