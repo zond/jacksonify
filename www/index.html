@@ -194,6 +194,15 @@
         <span>Maximum MJ</span>
       </div>
       <div class="placement-count" id="placementCount"></div>
+      <div class="slider-header" style="margin-top: 1rem">
+        <span class="slider-title">MJ volume</span>
+        <span class="slider-value" id="volumeValue">100%</span>
+      </div>
+      <input type="range" id="volumeSlider" min="0" max="200" value="100">
+      <div class="slider-labels">
+        <span>Silent</span>
+        <span>2x</span>
+      </div>
       <button class="btn download-btn" id="downloadBtn" style="margin-top: 0.75rem">
         <span>Download mix</span>
       </button>
@@ -261,6 +270,17 @@
     const intensitySlider = document.getElementById('intensitySlider');
     const sliderValueEl = document.getElementById('sliderValue');
     const placementCountEl = document.getElementById('placementCount');
+    const volumeSlider = document.getElementById('volumeSlider');
+    const volumeValueEl = document.getElementById('volumeValue');
+
+    function getVolumeMultiplier() {
+      return parseInt(volumeSlider.value) / 100;
+    }
+
+    volumeSlider.addEventListener('input', () => {
+      volumeValueEl.textContent = volumeSlider.value + '%';
+      if (isPlaying) scheduleAdLibs();
+    });
 
     // --- Sample loading ---
     const SAMPLE_FILES = [
@@ -419,10 +439,10 @@
           source.playbackRate.value = Math.pow(2, p.pitch_shift / 12);
         }
 
-        // Gain: scale relative to song loudness
+        // Gain: scale relative to song loudness + user volume
         const gainNode = audioCtx.createGain();
         const levelMatch = songRms / 0.08;
-        gainNode.gain.value = p.gain * levelMatch;
+        gainNode.gain.value = p.gain * levelMatch * getVolumeMultiplier();
         source.connect(gainNode);
         gainNode.connect(audioCtx.destination);
 
@@ -475,7 +495,7 @@
             s.playbackRate.value = Math.pow(2, p.pitch_shift / 12);
           }
           const g = offline.createGain();
-          g.gain.value = p.gain * levelMatch;
+          g.gain.value = p.gain * levelMatch * getVolumeMultiplier();
           s.connect(g);
           g.connect(offline.destination);
           s.start(p.time_seconds);
