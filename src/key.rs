@@ -3,7 +3,6 @@ use rustfft::{num_complex::Complex, FftPlanner};
 const FRAME_SIZE: usize = 4096;
 const HOP_SIZE: usize = 2048;
 
-// Krumhansl-Kessler key profiles
 const MAJOR_PROFILE: [f64; 12] = [
     6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88,
 ];
@@ -15,20 +14,129 @@ const NOTE_NAMES: [&str; 12] = [
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
 ];
 
+pub struct KeySegment {
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub key: String,
+    pub root_pitch_class: u8,
+    pub confidence: f64,
+}
+
 pub fn detect_key(samples: &[f32], sample_rate: f32) -> (String, f64) {
     if samples.len() < FRAME_SIZE {
         return ("Unknown".to_string(), 0.0);
     }
-
     let chroma = compute_chromagram(samples, sample_rate);
     correlate_with_profiles(&chroma)
+}
+
+pub fn detect_key_segments(
+    samples: &[f32],
+    sample_rate: f32,
+    window_sec: f64,
+) -> Vec<KeySegment> {
+    let window_samples = (window_sec * sample_rate as f64) as usize;
+    let hop_samples = window_samples / 2;
+
+    if samples.len() < FRAME_SIZE {
+        return vec![];
+    }
+
+    let mut raw_segments: Vec<(f64, f64, String, u8, f64)> = Vec::new();
+    let mut pos = 0;
+
+    while pos + FRAME_SIZE <= samples.len() {
+        let end = (pos + window_samples).min(samples.len());
+        let chunk = &samples[pos..end];
+        let chroma = compute_chromagram(chunk, sample_rate);
+
+        let mut best_key = String::new();
+        let mut best_corr = f64::NEG_INFINITY;
+        let mut best_root = 0u8;
+
+        for shift in 0..12 {
+            let major_corr =
+                pearson_correlation(&chroma, &rotate_profile(&MAJOR_PROFILE, shift));
+            let minor_corr =
+                pearson_correlation(&chroma, &rotate_profile(&MINOR_PROFILE, shift));
+
+            if major_corr > best_corr {
+                best_corr = major_corr;
+                best_key = format!("{} major", NOTE_NAMES[shift]);
+                best_root = shift as u8;
+            }
+            if minor_corr > best_corr {
+                best_corr = minor_corr;
+                best_key = format!("{} minor", NOTE_NAMES[shift]);
+                best_root = shift as u8;
+            }
+        }
+
+        let start_sec = pos as f64 / sample_rate as f64;
+        let end_sec = end as f64 / sample_rate as f64;
+        let confidence = ((best_corr + 1.0) / 2.0).clamp(0.0, 1.0);
+
+        raw_segments.push((start_sec, end_sec, best_key, best_root, confidence));
+
+        pos += hop_samples;
+    }
+
+    // Merge consecutive segments with the same key
+    let mut merged: Vec<KeySegment> = Vec::new();
+    for (start, end, key, root, conf) in raw_segments {
+        if let Some(last) = merged.last_mut() {
+            if last.key == key {
+                last.end_seconds = end;
+                last.confidence = last.confidence.max(conf);
+                continue;
+            }
+        }
+        merged.push(KeySegment {
+            start_seconds: start,
+            end_seconds: end,
+            key,
+            root_pitch_class: root,
+            confidence: conf,
+        });
+    }
+
+    // Remove very short segments (< 4 seconds) — assign them to surrounding key
+    let min_segment_duration = 4.0;
+    let mut filtered: Vec<KeySegment> = Vec::new();
+    for seg in merged {
+        let dur = seg.end_seconds - seg.start_seconds;
+        if dur < min_segment_duration {
+            if let Some(last) = filtered.last_mut() {
+                last.end_seconds = seg.end_seconds;
+                continue;
+            }
+        }
+        filtered.push(seg);
+    }
+
+    if filtered.is_empty() && !samples.is_empty() {
+        let (key, confidence) = detect_key(samples, sample_rate);
+        filtered.push(KeySegment {
+            start_seconds: 0.0,
+            end_seconds: samples.len() as f64 / sample_rate as f64,
+            key,
+            root_pitch_class: 0,
+            confidence,
+        });
+    }
+
+    filtered
 }
 
 fn compute_chromagram(samples: &[f32], sample_rate: f32) -> [f64; 12] {
     let mut planner = FftPlanner::new();
     let fft = planner.plan_fft_forward(FRAME_SIZE);
 
-    let num_frames = (samples.len() - FRAME_SIZE) / HOP_SIZE + 1;
+    let num_frames = if samples.len() >= FRAME_SIZE {
+        (samples.len() - FRAME_SIZE) / HOP_SIZE + 1
+    } else {
+        return [0.0; 12];
+    };
     let mut chroma = [0.0f64; 12];
 
     let window: Vec<f32> = (0..FRAME_SIZE)
@@ -54,10 +162,8 @@ fn compute_chromagram(samples: &[f32], sample_rate: f32) -> [f64; 12] {
 
         fft.process(&mut buffer);
 
-        // Map FFT bins to pitch classes
         for bin in 1..=FRAME_SIZE / 2 {
             let freq = bin as f64 * sample_rate as f64 / FRAME_SIZE as f64;
-            // Focus on musically relevant range (C2 to B6)
             if freq < 65.0 || freq > 2000.0 {
                 continue;
             }
@@ -70,7 +176,6 @@ fn compute_chromagram(samples: &[f32], sample_rate: f32) -> [f64; 12] {
         }
     }
 
-    // Normalize to [0, 1]
     let max = chroma.iter().cloned().fold(0.0f64, f64::max);
     if max > 0.0 {
         for c in &mut chroma {
