@@ -31,8 +31,7 @@ pub fn detect_tempo(samples: &[f32], sample_rate: f32) -> f64 {
         return 0.0;
     }
     let onset_signal = compute_spectral_flux(samples);
-    let peaks = pick_peaks(&onset_signal);
-    estimate_tempo(&peaks, sample_rate)
+    estimate_tempo_autocorrelation(&onset_signal, sample_rate)
 }
 
 pub fn detect_beat_grid(samples: &[f32], sample_rate: f32) -> BeatGrid {
@@ -273,56 +272,95 @@ fn pick_peaks(signal: &[f32]) -> Vec<usize> {
     peaks
 }
 
-fn estimate_tempo(peaks: &[usize], sample_rate: f32) -> f64 {
-    if peaks.len() < 2 {
+/// Estimate tempo via autocorrelation of the onset signal.
+/// This finds the dominant periodicity directly, which is much more robust
+/// than IOI histograms from peak picking.
+fn estimate_tempo_autocorrelation(onset_signal: &[f32], sample_rate: f32) -> f64 {
+    if onset_signal.len() < 100 {
         return 0.0;
     }
 
     let seconds_per_frame = HOP_SIZE as f64 / sample_rate as f64;
-    let mut bpm_votes: Vec<f64> = Vec::new();
 
-    for i in 1..peaks.len() {
-        let ioi = (peaks[i] - peaks[i - 1]) as f64 * seconds_per_frame;
-        if ioi <= 0.0 {
-            continue;
-        }
-        let bpm = 60.0 / ioi;
+    // Lag range corresponding to 40-220 BPM
+    let min_lag = (60.0 / (220.0 * seconds_per_frame)) as usize; // fastest tempo
+    let max_lag = (60.0 / (40.0 * seconds_per_frame)) as usize;  // slowest tempo
+    let max_lag = max_lag.min(onset_signal.len() / 2);
 
-        let mut folded = bpm;
-        while folded < 60.0 {
-            folded *= 2.0;
-        }
-        while folded > 200.0 {
-            folded /= 2.0;
-        }
-        if folded >= 60.0 && folded <= 200.0 {
-            bpm_votes.push(folded);
-        }
-    }
-
-    if bpm_votes.is_empty() {
+    if min_lag >= max_lag {
         return 0.0;
     }
 
-    let mut histogram = vec![0u32; 141];
+    // Compute mean for normalization
+    let mean: f64 = onset_signal.iter().map(|&x| x as f64).sum::<f64>() / onset_signal.len() as f64;
 
-    for &bpm in &bpm_votes {
-        let idx = (bpm.round() as i32 - 60).clamp(0, 140) as usize;
-        histogram[idx] += 1;
-        if idx > 0 {
-            histogram[idx - 1] += 1;
+    // Compute autocorrelation for each lag
+    let n = onset_signal.len();
+    let mut best_lag = min_lag;
+    let mut best_corr = f64::NEG_INFINITY;
+
+    // Precompute zero-mean signal
+    let centered: Vec<f64> = onset_signal.iter().map(|&x| x as f64 - mean).collect();
+
+    // Normalization: variance at lag 0
+    let var: f64 = centered.iter().map(|x| x * x).sum::<f64>();
+    if var < 1e-10 {
+        return 0.0;
+    }
+
+    let mut autocorr = vec![0.0f64; max_lag + 1];
+    for lag in min_lag..=max_lag {
+        let mut sum = 0.0;
+        for i in 0..n - lag {
+            sum += centered[i] * centered[i + lag];
         }
-        if idx < 140 {
-            histogram[idx + 1] += 1;
+        autocorr[lag] = sum / var;
+    }
+
+    // Find peaks in the autocorrelation (local maxima)
+    let mut candidates: Vec<(usize, f64)> = Vec::new();
+    for lag in (min_lag + 1)..max_lag {
+        if autocorr[lag] > autocorr[lag - 1] && autocorr[lag] > autocorr[lag + 1]
+            && autocorr[lag] > 0.0
+        {
+            candidates.push((lag, autocorr[lag]));
         }
     }
 
-    let best_idx = histogram
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, &count)| count)
-        .map(|(idx, _)| idx)
-        .unwrap_or(0);
+    if candidates.is_empty() {
+        // Fallback: just take the global max
+        for lag in min_lag..=max_lag {
+            if autocorr[lag] > best_corr {
+                best_corr = autocorr[lag];
+                best_lag = lag;
+            }
+        }
+    } else {
+        // Prefer the first strong peak (smallest lag = fastest reasonable tempo)
+        // but weight by correlation strength
+        let max_corr = candidates.iter().map(|(_, c)| *c).fold(0.0f64, f64::max);
+        let threshold = max_corr * 0.8;
 
-    (best_idx + 60) as f64
+        // Among candidates above 80% of the max, pick the one with smallest lag
+        // (this avoids octave errors — picking half-tempo)
+        if let Some(&(lag, _)) = candidates.iter().find(|(_, c)| *c >= threshold) {
+            best_lag = lag;
+        } else {
+            best_lag = candidates[0].0;
+        }
+    }
+
+    let bpm = 60.0 / (best_lag as f64 * seconds_per_frame);
+
+    // Fold into 60-200 BPM range
+    let mut folded = bpm;
+    while folded < 60.0 {
+        folded *= 2.0;
+    }
+    while folded > 200.0 {
+        folded /= 2.0;
+    }
+
+    // Round to nearest 0.5 BPM
+    (folded * 2.0).round() / 2.0
 }
