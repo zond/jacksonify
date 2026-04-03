@@ -123,12 +123,21 @@ fn generate_candidates(beat_grid: &BeatGrid) -> Vec<Candidate> {
             });
         }
 
+        // Upbeats of 1 and 3: exclamations and hee-hee
+        if beat.beat_in_bar == 1 || beat.beat_in_bar == 3 {
+            candidates.push(Candidate {
+                time: beat_grid.upbeat_after(idx),
+                categories: vec![Category::HeeHee, Category::Exclamation],
+                beat_strength: 0.3,
+            });
+        }
+
         // 16th notes at higher tempos
-        if tempo > 110.0 && (beat.beat_in_bar == 2 || beat.beat_in_bar == 4) {
+        if tempo > 100.0 {
             candidates.push(Candidate {
                 time: beat_grid.sixteenth_e(idx),
-                categories: vec![Category::HeeHee],
-                beat_strength: 0.2,
+                categories: vec![Category::HeeHee, Category::Grunt],
+                beat_strength: 0.15,
             });
         }
     }
@@ -216,7 +225,7 @@ fn assign_and_prioritize(
         }
 
         // Avoid repeating the same category too quickly
-        let min_spacing = if tempo > 110.0 { 0.5 } else { 1.0 };
+        let min_spacing = if tempo > 110.0 { 0.25 } else { 0.5 };
         if candidate.time - last_time < min_spacing {
             continue;
         }
